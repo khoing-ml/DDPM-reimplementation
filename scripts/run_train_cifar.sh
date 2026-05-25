@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DATA_DIR="${DATA_DIR:-./data}"
+OUTPUT_DIR="${OUTPUT_DIR:-./runs/cifar10}"
+BATCH_SIZE="${BATCH_SIZE:-128}"
+EPOCHS="${EPOCHS:-1000}"
+LR="${LR:-2e-4}"
+NUM_WORKERS="${NUM_WORKERS:-0}"
+IMAGE_SIZE="${IMAGE_SIZE:-32}"
+NUM_TIMESTEPS="${NUM_TIMESTEPS:-1000}"
+BETA_SCHEDULE="${BETA_SCHEDULE:-linear}"
+BETA_START="${BETA_START:-1e-4}"
+BETA_END="${BETA_END:-2e-2}"
+CH="${CH:-128}"
+NUM_RES_BLOCKS="${NUM_RES_BLOCKS:-2}"
+DROPOUT="${DROPOUT:-0.1}"
+SEED="${SEED:-0}"
+DEVICE="${DEVICE:-cuda}"
+NUM_GPUS="${NUM_GPUS:-1}"
+SAVE_EVERY="${SAVE_EVERY:-1}"
+SAMPLE_EVERY="${SAMPLE_EVERY:-1}"
+NUM_SAMPLE_IMAGES="${NUM_SAMPLE_IMAGES:-64}"
+WANDB_PROJECT="${WANDB_PROJECT:-}"
+WANDB_ENTITY="${WANDB_ENTITY:-}"
+WANDB_NAME="${WANDB_NAME:-}"
+WANDB_MODE="${WANDB_MODE:-online}"
+FID_EVERY="${FID_EVERY:-0}"
+FID_SAMPLES="${FID_SAMPLES:-1000}"
+GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
+RESUME_FROM="${RESUME_FROM:-}"
+
+if [[ -n "$WANDB_PROJECT" && -z "${WANDB_API_KEY:-}" ]]; then
+  echo "W&B logging is enabled but WANDB_API_KEY is not set. Run 'wandb login' or export WANDB_API_KEY first."
+  exit 1
+fi
+
+TRAIN_ARGS=(
+  --data-dir "$DATA_DIR"
+  --output-dir "$OUTPUT_DIR"
+  --batch-size "$BATCH_SIZE"
+  --epochs "$EPOCHS"
+  --lr "$LR"
+  --num-workers "$NUM_WORKERS"
+  --image-size "$IMAGE_SIZE"
+  --num-timesteps "$NUM_TIMESTEPS"
+  --beta-schedule "$BETA_SCHEDULE"
+  --beta-start "$BETA_START"
+  --beta-end "$BETA_END"
+  --ch "$CH"
+  --num-res-blocks "$NUM_RES_BLOCKS"
+  --dropout "$DROPOUT"
+  --seed "$SEED"
+  --device "$DEVICE"
+  --save-every "$SAVE_EVERY"
+  --sample-every "$SAMPLE_EVERY"
+  --num-sample-images "$NUM_SAMPLE_IMAGES"
+  --wandb-project "$WANDB_PROJECT"
+  --wandb-entity "$WANDB_ENTITY"
+  --wandb-name "$WANDB_NAME"
+  --wandb-mode "$WANDB_MODE"
+  --fid-every "$FID_EVERY"
+  --fid-samples "$FID_SAMPLES"
+  --grad-accum-steps "$GRAD_ACCUM_STEPS"
+  --resume-from "$RESUME_FROM"
+)
+
+if [[ "$NUM_GPUS" -gt 1 ]]; then
+  torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py "${TRAIN_ARGS[@]}"
+else
+  python3 train.py "${TRAIN_ARGS[@]}"
+fi

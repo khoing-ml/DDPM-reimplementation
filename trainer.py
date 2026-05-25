@@ -1,0 +1,285 @@
+"""Simple CIFAR-10 DDPM training entry point."""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import nullcontext
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Tuple
+
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+from diffusion import GaussianDiffusion, get_beta_schedule
+from data import build_cifar10_loaders
+from metrics import compute_fid
+from distributed import get_local_rank, get_rank, get_world_size, is_distributed, is_main_process, setup_distributed, unwrap_model
+from models.unet import UNet
+from utils import (
+    load_checkpoint,
+    save_checkpoint,
+    save_real_fake_panel,
+    save_sample_grid,
+    set_seed,
+    setup_wandb,
+    wandb_image_from_grid,
+)
+
+
+@dataclass
+class TrainConfig:
+    data_dir: str = "./data"
+    output_dir: str = "./runs/cifar10"
+    batch_size: int = 128
+    epochs: int = 1000
+    lr: float = 2e-4
+    num_workers: int = 0
+    image_size: int = 32
+    num_timesteps: int = 1000
+    beta_schedule: str = "linear"
+    beta_start: float = 1e-4
+    beta_end: float = 2e-2
+    ch: int = 128
+    ch_mult: Tuple[int, ...] = (1, 2, 2, 2)
+    num_res_blocks: int = 2
+    attn_resolutions: Tuple[int, ...] = (16,)
+    dropout: float = 0.1
+    seed: int = 0
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    save_every: int = 1
+    sample_every: int = 1
+    num_sample_images: int = 64
+    wandb_project: str = ""
+    wandb_entity: str = ""
+    wandb_name: str = ""
+    wandb_mode: str = "online"
+    fid_every: int = 0
+    fid_samples: int = 1000
+    distributed: bool = False
+    grad_accum_steps: int = 1
+    resume_from: str = ""
+
+
+def build_model(cfg: TrainConfig):
+    model = UNet(
+        in_ch=3,
+        ch=cfg.ch,
+        out_ch=3,
+        ch_mult=cfg.ch_mult,
+        num_res_blocks=cfg.num_res_blocks,
+        attn_resolutions=cfg.attn_resolutions,
+        dropout=cfg.dropout,
+        resolution=cfg.image_size,
+    )
+    return model
+
+
+def make_diffusion(cfg: TrainConfig):
+    betas = get_beta_schedule(
+        cfg.beta_schedule,
+        beta_start=cfg.beta_start,
+        beta_end=cfg.beta_end,
+        num_diffusion_timesteps=cfg.num_timesteps,
+    )
+    return GaussianDiffusion(betas=betas)
+
+
+def train(cfg: TrainConfig):
+    set_seed(cfg.seed)
+    distributed = setup_distributed() if cfg.distributed or is_distributed() else False
+    rank = get_rank()
+    world_size = get_world_size()
+    local_rank = get_local_rank()
+    device = torch.device(cfg.device)
+    if distributed and torch.cuda.is_available():
+        device = torch.device(f"cuda:{local_rank}")
+
+    train_loader, test_loader = build_cifar10_loaders(
+        cfg.data_dir,
+        cfg.batch_size,
+        cfg.num_workers,
+        cfg.image_size,
+        distributed=distributed,
+        rank=rank,
+        world_size=world_size,
+    )
+    model = build_model(cfg).to(device)
+    diffusion = make_diffusion(cfg)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+    start_epoch = 0
+    global_step = 0
+    if cfg.resume_from:
+        checkpoint = load_checkpoint(model, optimizer, cfg.resume_from, map_location=device)
+        start_epoch = int(checkpoint.get("epoch", 0))
+        global_step = int(checkpoint.get("global_step", 0))
+    if distributed and torch.cuda.is_available():
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+    wandb_run = setup_wandb(cfg) if is_main_process() else None
+    fixed_real_batch, _ = next(iter(test_loader))
+    fixed_real_batch = fixed_real_batch.to(device)
+    eval_model = unwrap_model(model)
+
+    output_dir = Path(cfg.output_dir)
+    if is_main_process():
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    accum_steps = max(1, cfg.grad_accum_steps)
+    for epoch in range(start_epoch, cfg.epochs):
+        model.train()
+        if distributed and hasattr(train_loader, "sampler") and train_loader.sampler is not None:
+            train_loader.sampler.set_epoch(epoch)
+        running_loss = 0.0
+        optimizer.zero_grad(set_to_none=True)
+        accum_index = 0
+        for images, _ in train_loader:
+            images = images.to(device)
+            t = torch.randint(0, diffusion.num_timesteps, (images.shape[0],), device=device, dtype=torch.long)
+            loss = diffusion.training_losses(model.forward, images, t).mean()
+            loss_to_backward = loss / accum_steps
+            accum_index += 1
+            should_sync = accum_index == accum_steps
+            sync_context = nullcontext() if (not distributed or should_sync) else model.no_sync()
+            with sync_context:
+                loss_to_backward.backward()
+
+            running_loss += loss.item()
+            global_step += 1
+
+            if should_sync:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                accum_index = 0
+
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "train/loss_step": loss.item(),
+                        "train/global_step": global_step,
+                        "train/lr": cfg.lr,
+                        "train/grad_accum_steps": accum_steps,
+                    },
+                    step=global_step,
+                )
+
+        if accum_index != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        avg_loss = running_loss / max(1, len(train_loader))
+        print(f"epoch {epoch + 1}/{cfg.epochs} loss={avg_loss:.4f}")
+
+        log_payload = {"train/loss": avg_loss, "epoch": epoch + 1}
+
+        if is_main_process() and (epoch + 1) % cfg.save_every == 0:
+            save_checkpoint(eval_model, optimizer, output_dir, epoch + 1, cfg, global_step=global_step)
+        if is_main_process() and (epoch + 1) % cfg.sample_every == 0:
+            grid = save_sample_grid(eval_model, diffusion, device, output_dir / "samples", epoch + 1, cfg.image_size, cfg.num_sample_images)
+            if wandb_run is not None:
+                log_payload["samples"] = wandb_image_from_grid(grid)
+
+            fake_images = diffusion.p_sample_loop(
+                eval_model.forward,
+                shape=(min(cfg.num_sample_images, fixed_real_batch.shape[0]), 3, cfg.image_size, cfg.image_size),
+                device=device,
+            )
+            panel = save_real_fake_panel(
+                fixed_real_batch,
+                fake_images,
+                output_dir / "panels",
+                epoch + 1,
+                num_images=min(cfg.num_sample_images, fixed_real_batch.shape[0], fake_images.shape[0]),
+            )
+            if wandb_run is not None:
+                log_payload["panels/real_vs_fake"] = wandb_image_from_grid(panel)
+
+        if is_main_process() and cfg.fid_every > 0 and (epoch + 1) % cfg.fid_every == 0:
+            fid = compute_fid(
+                model=eval_model,
+                diffusion=diffusion,
+                loader=test_loader,
+                device=device,
+                image_size=cfg.image_size,
+                num_samples=cfg.fid_samples,
+            )
+            print(f"epoch {epoch + 1}/{cfg.epochs} fid={fid:.4f}")
+            log_payload["eval/fid"] = fid
+
+        if wandb_run is not None:
+            wandb_run.log(log_payload, step=epoch + 1)
+
+    if distributed and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
+
+    return model
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train a CIFAR-10 DDPM model")
+    parser.add_argument("--data-dir", default="./data")
+    parser.add_argument("--output-dir", default="./runs/cifar10")
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--image-size", type=int, default=32)
+    parser.add_argument("--num-timesteps", type=int, default=1000)
+    parser.add_argument("--beta-schedule", default="linear")
+    parser.add_argument("--beta-start", type=float, default=1e-4)
+    parser.add_argument("--beta-end", type=float, default=2e-2)
+    parser.add_argument("--ch", type=int, default=128)
+    parser.add_argument("--num-res-blocks", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--save-every", type=int, default=1)
+    parser.add_argument("--sample-every", type=int, default=1)
+    parser.add_argument("--num-sample-images", type=int, default=64)
+    parser.add_argument("--wandb-project", default="")
+    parser.add_argument("--wandb-entity", default="")
+    parser.add_argument("--wandb-name", default="")
+    parser.add_argument("--wandb-mode", default="online")
+    parser.add_argument("--fid-every", type=int, default=0)
+    parser.add_argument("--fid-samples", type=int, default=1000)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--resume-from", default="")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    cfg = TrainConfig(
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        num_workers=args.num_workers,
+        image_size=args.image_size,
+        num_timesteps=args.num_timesteps,
+        beta_schedule=args.beta_schedule,
+        beta_start=args.beta_start,
+        beta_end=args.beta_end,
+        ch=args.ch,
+        num_res_blocks=args.num_res_blocks,
+        dropout=args.dropout,
+        seed=args.seed,
+        device=args.device,
+        save_every=args.save_every,
+        sample_every=args.sample_every,
+        num_sample_images=args.num_sample_images,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+        wandb_name=args.wandb_name,
+        wandb_mode=args.wandb_mode,
+        fid_every=args.fid_every,
+        fid_samples=args.fid_samples,
+        grad_accum_steps=args.grad_accum_steps,
+        resume_from=args.resume_from,
+    )
+    train(cfg)
