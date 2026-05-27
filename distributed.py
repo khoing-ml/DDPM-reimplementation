@@ -32,7 +32,14 @@ def setup_distributed():
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", init_method="env://")
     if torch.cuda.is_available():
-        torch.cuda.set_device(get_local_rank())
+        local_rank = get_local_rank()
+        device_count = torch.cuda.device_count()
+        if local_rank >= device_count:
+            raise RuntimeError(
+                f"LOCAL_RANK={local_rank} but only {device_count} CUDA device(s) are visible. "
+                "Lower NUM_GPUS / --nproc_per_node or expose more GPUs via CUDA_VISIBLE_DEVICES."
+            )
+        torch.cuda.set_device(local_rank)
     return True
 
 

@@ -1,0 +1,21 @@
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_setup.py:_flush():81] Current SDK version is 0.27.0
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_setup.py:_flush():81] Configure stats pid to 71807
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_init.py:setup_run_log_directory():723] Logging user logs to /home/khoi/Code/DDPM/wandb/offline-run-20260527_213811-ox97lhmr/logs/debug.log
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_init.py:setup_run_log_directory():724] Logging internal logs to /home/khoi/Code/DDPM/wandb/offline-run-20260527_213811-ox97lhmr/logs/debug-internal.log
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_init.py:init():851] calling init triggers
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_init.py:init():856] wandb.init called with sweep_config: {}
+config: {'data_dir': './data', 'output_dir': './runs/cifar10', 'batch_size': 128, 'epochs': 0, 'lr': 0.0002, 'num_workers': 1, 'image_size': 32, 'num_timesteps': 1000, 'beta_schedule': 'linear', 'beta_start': 0.0001, 'beta_end': 0.02, 'ch': 128, 'ch_mult': (1, 2, 2, 2), 'num_res_blocks': 3, 'attn_resolutions': (16,), 'dropout': 0.1, 'seed': 0, 'device': 'cuda', 'save_every': 5, 'sample_every': 5, 'num_sample_images': 64, 'wandb_project': 'ddpm', 'wandb_entity': 'default', 'wandb_name': 'cifar10_train', 'wandb_mode': 'offline', 'fid_every': 5, 'fid_samples': 1000, 'distributed': False, 'grad_accum_steps': 1, 'resume_from': '', '_wandb': {}}
+2026-05-27 21:38:11,391 INFO    MainThread:71807 [wandb_init.py:init():899] starting backend
+2026-05-27 21:38:11,612 INFO    MainThread:71807 [wandb_init.py:init():914] sending inform_init request
+2026-05-27 21:38:11,735 INFO    MainThread:71807 [wandb_init.py:init():919] backend started and connected
+2026-05-27 21:38:11,752 INFO    MainThread:71807 [wandb_init.py:init():989] updated telemetry
+2026-05-27 21:38:11,756 INFO    MainThread:71807 [wandb_init.py:init():1012] communicating run to backend with 90.0 second timeout
+2026-05-27 21:38:11,760 INFO    MainThread:71807 [wandb_init.py:init():1057] starting run threads in backend
+2026-05-27 21:38:11,795 INFO    MainThread:71807 [wandb_run.py:_console_start():2509] atexit reg
+2026-05-27 21:38:11,795 INFO    MainThread:71807 [wandb_run.py:_redirect():2359] redirect: wrap_raw
+2026-05-27 21:38:11,795 INFO    MainThread:71807 [wandb_run.py:_redirect():2428] Wrapping output streams.
+2026-05-27 21:38:11,795 INFO    MainThread:71807 [wandb_run.py:_redirect():2451] Redirects installed.
+2026-05-27 21:38:11,796 INFO    MainThread:71807 [wandb_init.py:init():1095] run started, returning control to user process
+2026-05-27 21:38:13,506 INFO    wandb-AsyncioManager-main:71807 [service_client.py:_forward_responses():122] Reached EOF.
+2026-05-27 21:38:13,506 INFO    wandb-AsyncioManager-main:71807 [mailbox.py:close():154] Closing mailbox, abandoning 0 handles.
