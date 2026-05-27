@@ -1,0 +1,1 @@
+{"train/grad_accum_steps":1,"_timestamp":1.779885466451169e+09,"_step":1340,"train/loss_step":0.03874680772423744,"train/global_step":1340,"_wandb":{"runtime":520},"_runtime":520.473759857,"train/lr":0.0002}

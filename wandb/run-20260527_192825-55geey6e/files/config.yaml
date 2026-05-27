@@ -1,0 +1,172 @@
+_wandb:
+    value:
+        cli_version: 0.27.0
+        e:
+            ci83scnd3269hw5mkmrh8ihg2vlss6e3:
+                args:
+                    - --data-dir
+                    - ./data
+                    - --output-dir
+                    - ./runs/cifar10
+                    - --batch-size
+                    - "64"
+                    - --epochs
+                    - "1000"
+                    - --lr
+                    - "2e-4"
+                    - --num-workers
+                    - "1"
+                    - --image-size
+                    - "32"
+                    - --num-timesteps
+                    - "1000"
+                    - --beta-schedule
+                    - linear
+                    - --beta-start
+                    - "1e-4"
+                    - --beta-end
+                    - "2e-2"
+                    - --ch
+                    - "128"
+                    - --num-res-blocks
+                    - "2"
+                    - --dropout
+                    - "0.1"
+                    - --seed
+                    - "0"
+                    - --device
+                    - cuda
+                    - --save-every
+                    - "5"
+                    - --sample-every
+                    - "5"
+                    - --num-sample-images
+                    - "64"
+                    - --wandb-project
+                    - ddpm
+                    - --wandb-entity
+                    - default
+                    - --wandb-name
+                    - cifar10_train
+                    - --wandb-mode
+                    - online
+                    - --fid-every
+                    - "5"
+                    - --fid-samples
+                    - "1000"
+                    - --grad-accum-steps
+                    - "1"
+                    - --resume-from
+                    - ""
+                codePath: train.py
+                codePathLocal: train.py
+                cpu_count: 12
+                cpu_count_logical: 16
+                cudaVersion: "13.2"
+                disk:
+                    /:
+                        total: "249776402432"
+                        used: "49322627072"
+                email: Khoi.NM235123@sis.hust.edu.vn
+                executable: /home/khoi/miniconda3/envs/diffusion/bin/python3
+                git:
+                    commit: 96ddf5eb6848842cef97ab4f1f6c35654b3b4dd5
+                    remote: https://github.com/khoing-ml/DDPM-reimplementation.git
+                gpu: NVIDIA GeForce RTX 3060 Laptop GPU
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 3840
+                      memoryTotal: "6442450944"
+                      name: NVIDIA GeForce RTX 3060 Laptop GPU
+                      uuid: GPU-98fbd5a6-bcf4-b1c5-e667-cccb801d9b94
+                host: khoi
+                memory:
+                    total: "15936991232"
+                os: Linux-7.0.0-15-generic-x86_64-with-glibc2.43
+                program: /home/khoi/Code/DDPM/train.py
+                python: CPython 3.14.4
+                root: /home/khoi/Code/DDPM
+                startedAt: "2026-05-27T12:28:25.293414Z"
+                writerId: ci83scnd3269hw5mkmrh8ihg2vlss6e3
+        m: []
+        python_version: 3.14.4
+        t:
+            "1":
+                - 1
+                - 41
+            "2":
+                - 1
+                - 41
+            "3":
+                - 16
+                - 61
+            "4": 3.14.4
+            "5": 0.27.0
+            "12": 0.27.0
+            "13": linux-x86_64
+attn_resolutions:
+    value:
+        - 16
+batch_size:
+    value: 64
+beta_end:
+    value: 0.02
+beta_schedule:
+    value: linear
+beta_start:
+    value: 0.0001
+ch:
+    value: 128
+ch_mult:
+    value:
+        - 1
+        - 2
+        - 2
+        - 2
+data_dir:
+    value: ./data
+device:
+    value: cuda
+distributed:
+    value: false
+dropout:
+    value: 0.1
+epochs:
+    value: 1000
+fid_every:
+    value: 0
+fid_samples:
+    value: 1000
+grad_accum_steps:
+    value: 1
+image_size:
+    value: 32
+lr:
+    value: 0.0002
+num_res_blocks:
+    value: 2
+num_sample_images:
+    value: 64
+num_timesteps:
+    value: 1000
+num_workers:
+    value: 1
+output_dir:
+    value: ./runs/cifar10
+resume_from:
+    value: ""
+sample_every:
+    value: 5
+save_every:
+    value: 5
+seed:
+    value: 0
+wandb_entity:
+    value: ""
+wandb_mode:
+    value: online
+wandb_name:
+    value: ""
+wandb_project:
+    value: ddpm

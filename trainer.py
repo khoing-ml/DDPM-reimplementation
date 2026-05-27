@@ -52,7 +52,7 @@ class TrainConfig:
     save_every: int = 1
     sample_every: int = 1
     num_sample_images: int = 64
-    wandb_project: str = ""
+    wandb_project: str = "ddpm"
     wandb_entity: str = ""
     wandb_name: str = ""
     wandb_mode: str = "online"
@@ -173,7 +173,7 @@ def train(cfg: TrainConfig):
         avg_loss = running_loss / max(1, len(train_loader))
         print(f"epoch {epoch + 1}/{cfg.epochs} loss={avg_loss:.4f}")
 
-        log_payload = {"train/loss": avg_loss, "epoch": epoch + 1}
+        log_payload = {"train/loss": avg_loss, "epoch": epoch + 1, "train/num_epochs": cfg.epochs}
 
         if is_main_process() and (epoch + 1) % cfg.save_every == 0:
             save_checkpoint(eval_model, optimizer, output_dir, epoch + 1, cfg, global_step=global_step)
@@ -240,7 +240,7 @@ def parse_args():
     parser.add_argument("--save-every", type=int, default=1)
     parser.add_argument("--sample-every", type=int, default=1)
     parser.add_argument("--num-sample-images", type=int, default=64)
-    parser.add_argument("--wandb-project", default="")
+    parser.add_argument("--wandb-project", default="ddpm")
     parser.add_argument("--wandb-entity", default="")
     parser.add_argument("--wandb-name", default="")
     parser.add_argument("--wandb-mode", default="online")

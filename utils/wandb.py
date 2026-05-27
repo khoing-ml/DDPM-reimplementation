@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-import os
 
 
 def setup_wandb(cfg):
@@ -13,11 +12,6 @@ def setup_wandb(cfg):
         import wandb
     except ImportError:
         raise RuntimeError("W&B logging was requested but `wandb` is not installed. Install it with `pip install wandb`.")
-
-    if not os.environ.get("WANDB_API_KEY"):
-        raise RuntimeError(
-            "W&B logging was requested but no login was found. Run `wandb login` or set `WANDB_API_KEY` before training."
-        )
 
     run = wandb.init(
         project=project,
