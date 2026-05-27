@@ -161,6 +161,7 @@ def train(cfg: TrainConfig):
                         "train/global_step": global_step,
                         "train/lr": cfg.lr,
                         "train/grad_accum_steps": accum_steps,
+                        "train/epoch": epoch + (accum_index / accum_steps),
                     },
                     step=global_step,
                 )
