@@ -2,4 +2,4 @@
 
 git add .
 git commit -m "Auto commit: $(date)"
-git push
+git push origin main
