@@ -23,14 +23,15 @@ def setup_wandb(cfg):
     }
 
     try:
-        return wandb.init(**init_kwargs)
-    except Exception as exc:
-        # Permission/network failures in online mode should not kill training.
+        run = wandb.init(**init_kwargs)
+        return run
+    except Exception as exc:    
         if init_kwargs["mode"] == "online":
             print(f"[wandb] online init failed ({exc}); retrying in offline mode.")
             try:
                 init_kwargs["mode"] = "offline"
-                return wandb.init(**init_kwargs)
+                run = wandb.init(**init_kwargs)
+                return run
             except Exception as offline_exc:
                 print(f"[wandb] offline init failed ({offline_exc}); disabling W&B logging.")
                 return None

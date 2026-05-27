@@ -180,7 +180,7 @@ def train(cfg: TrainConfig):
         avg_loss = running_loss / max(1, len(train_loader))
         print(f"epoch {epoch + 1}/{cfg.epochs} loss={avg_loss:.4f}")
 
-        log_payload = {"train/loss": avg_loss, "epoch": epoch + 1, "train/num_epochs": cfg.epochs}
+        log_payload = {"train/loss": avg_loss, "epoch": epoch + 1}
         log_payload["train/global_step"] = global_step
         log_payload["train/epoch"] = epoch + 1
 
