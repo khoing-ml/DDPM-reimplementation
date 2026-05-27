@@ -16,7 +16,9 @@ def save_checkpoint(model, optimizer, output_dir: Path, epoch: int, cfg, global_
         "optimizer_state": optimizer.state_dict(),
         "config": asdict(cfg),
     }
-    torch.save(ckpt, output_dir / f"checkpoint_{epoch:06d}.pt")
+    path = output_dir / f"checkpoint_{epoch:06d}.pt"
+    torch.save(ckpt, path)
+    return path
 
 
 def load_checkpoint(model, optimizer, checkpoint_path: str | Path, map_location: str | torch.device = "cpu"):

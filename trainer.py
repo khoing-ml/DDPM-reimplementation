@@ -24,6 +24,7 @@ from utils import (
     save_real_fake_panel,
     save_sample_grid,
     set_seed,
+    log_wandb_artifact,
     setup_wandb,
     wandb_image_from_grid,
 )
@@ -118,6 +119,12 @@ def train(cfg: TrainConfig):
     if distributed and torch.cuda.is_available():
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
     wandb_run = setup_wandb(cfg) if is_main_process() else None
+    if wandb_run is not None:
+        wandb_run.define_metric("train/global_step")
+        wandb_run.define_metric("train/*", step_metric="train/global_step")
+        wandb_run.define_metric("eval/*", step_metric="train/global_step")
+        wandb_run.define_metric("samples/*", step_metric="train/global_step")
+        wandb_run.define_metric("panels/*", step_metric="train/global_step")
     fixed_real_batch, _ = next(iter(test_loader))
     fixed_real_batch = fixed_real_batch.to(device)
     eval_model = unwrap_model(model)
@@ -163,7 +170,6 @@ def train(cfg: TrainConfig):
                         "train/grad_accum_steps": accum_steps,
                         "train/epoch": epoch + (accum_index / accum_steps),
                     },
-                    step=global_step,
                 )
 
         if accum_index != 0:
@@ -175,28 +181,54 @@ def train(cfg: TrainConfig):
         print(f"epoch {epoch + 1}/{cfg.epochs} loss={avg_loss:.4f}")
 
         log_payload = {"train/loss": avg_loss, "epoch": epoch + 1, "train/num_epochs": cfg.epochs}
+        log_payload["train/global_step"] = global_step
+        log_payload["train/epoch"] = epoch + 1
 
         if is_main_process() and (epoch + 1) % cfg.save_every == 0:
-            save_checkpoint(eval_model, optimizer, output_dir, epoch + 1, cfg, global_step=global_step)
-        if is_main_process() and (epoch + 1) % cfg.sample_every == 0:
-            grid = save_sample_grid(eval_model, diffusion, device, output_dir / "samples", epoch + 1, cfg.image_size, cfg.num_sample_images)
+            checkpoint_path = save_checkpoint(eval_model, optimizer, output_dir, epoch + 1, cfg, global_step=global_step)
             if wandb_run is not None:
-                log_payload["samples"] = wandb_image_from_grid(grid)
+                log_wandb_artifact(
+                    wandb_run,
+                    name=f"checkpoint-epoch-{epoch + 1:06d}",
+                    artifact_type="checkpoint",
+                    file_path=checkpoint_path,
+                    metadata={"epoch": epoch + 1, "global_step": global_step},
+                )
+        if is_main_process() and (epoch + 1) % cfg.sample_every == 0:
+            samples_dir = output_dir / "samples"
+            grid = save_sample_grid(eval_model, diffusion, device, samples_dir, epoch + 1, cfg.image_size, cfg.num_sample_images)
+            if wandb_run is not None:
+                log_payload["samples/grid"] = wandb_image_from_grid(grid)
+                log_wandb_artifact(
+                    wandb_run,
+                    name=f"samples-epoch-{epoch + 1:06d}",
+                    artifact_type="sample_grid",
+                    file_path=samples_dir / f"sample_{epoch + 1:06d}.png",
+                    metadata={"epoch": epoch + 1, "global_step": global_step},
+                )
 
             fake_images = diffusion.p_sample_loop(
                 eval_model.forward,
                 shape=(min(cfg.num_sample_images, fixed_real_batch.shape[0]), 3, cfg.image_size, cfg.image_size),
                 device=device,
             )
+            panels_dir = output_dir / "panels"
             panel = save_real_fake_panel(
                 fixed_real_batch,
                 fake_images,
-                output_dir / "panels",
+                panels_dir,
                 epoch + 1,
                 num_images=min(cfg.num_sample_images, fixed_real_batch.shape[0], fake_images.shape[0]),
             )
             if wandb_run is not None:
                 log_payload["panels/real_vs_fake"] = wandb_image_from_grid(panel)
+                log_wandb_artifact(
+                    wandb_run,
+                    name=f"real-fake-panel-epoch-{epoch + 1:06d}",
+                    artifact_type="real_fake_panel",
+                    file_path=panels_dir / f"real_fake_{epoch + 1:06d}.png",
+                    metadata={"epoch": epoch + 1, "global_step": global_step},
+                )
 
         if is_main_process() and cfg.fid_every > 0 and (epoch + 1) % cfg.fid_every == 0:
             fid = compute_fid(
@@ -211,7 +243,7 @@ def train(cfg: TrainConfig):
             log_payload["eval/fid"] = fid
 
         if wandb_run is not None:
-            wandb_run.log(log_payload, step=epoch + 1)
+            wandb_run.log(log_payload)
 
     if distributed and dist.is_initialized():
         dist.barrier()
@@ -247,6 +279,7 @@ def parse_args():
     parser.add_argument("--wandb-mode", default="online")
     parser.add_argument("--fid-every", type=int, default=0)
     parser.add_argument("--fid-samples", type=int, default=1000)
+    parser.add_argument("--distributed", action="store_true")
     parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--resume-from", default="")
     return parser.parse_args()
@@ -280,6 +313,7 @@ if __name__ == "__main__":
         wandb_mode=args.wandb_mode,
         fid_every=args.fid_every,
         fid_samples=args.fid_samples,
+        distributed=args.distributed,
         grad_accum_steps=args.grad_accum_steps,
         resume_from=args.resume_from,
     )

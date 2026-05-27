@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 
 
 def setup_wandb(cfg):
@@ -28,4 +29,23 @@ def wandb_image_from_grid(grid):
         import wandb
     except ImportError:
         return None
+
+    if hasattr(grid, "detach"):
+        grid = grid.detach().cpu()
+
     return wandb.Image(grid)
+
+
+def log_wandb_artifact(run, name: str, artifact_type: str, file_path: str | Path, metadata=None):
+    if run is None:
+        return None
+
+    try:
+        import wandb
+    except ImportError:
+        return None
+
+    artifact = wandb.Artifact(name=name, type=artifact_type, metadata=metadata or {})
+    artifact.add_file(str(file_path))
+    run.log_artifact(artifact)
+    return artifact

@@ -34,6 +34,13 @@ def main():
         save_every=args.save_every,
         sample_every=args.sample_every,
         num_sample_images=args.num_sample_images,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+        wandb_name=args.wandb_name,
+        wandb_mode=args.wandb_mode,
+        fid_every=args.fid_every,
+        fid_samples=args.fid_samples,
+        distributed=args.distributed,
         grad_accum_steps=args.grad_accum_steps,
         resume_from=args.resume_from,
     )

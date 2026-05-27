@@ -19,7 +19,7 @@ def save_sample_grid(
     model.eval()
     samples = diffusion.p_sample_loop(model.forward, shape=(num_images, 3, image_size, image_size), device=device)
     samples = (samples.clamp(-1, 1) + 1.0) / 2.0
-    grid = tv_utils.make_grid(samples, nrow=int(num_images**0.5))
+    grid = tv_utils.make_grid(samples, nrow=int(num_images**0.5)).cpu()
     output_dir.mkdir(parents=True, exist_ok=True)
     tv_utils.save_image(grid, output_dir / f"sample_{step:06d}.png")
     model.train()
