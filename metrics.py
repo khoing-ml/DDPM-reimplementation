@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 
 
@@ -15,8 +13,14 @@ def _get_fid_metric(device: torch.device):
             "FID evaluation requires torchmetrics. Install it with `pip install torchmetrics`."
         ) from exc
 
-    # normalize=True lets us feed float images in [0, 1].
-    metric = FrechetInceptionDistance(normalize=True).to(device)
+    try:
+        # FrechetInceptionDistance also needs the torch-fidelity backend at runtime.
+        metric = FrechetInceptionDistance(normalize=True).to(device)
+    except ModuleNotFoundError as exc:
+        if "torch-fidelity" in str(exc).lower():
+            return None
+        raise
+
     return metric
 
 
@@ -35,6 +39,8 @@ def compute_fid(
     also converted to [0, 1] before being passed to the metric.
     """
     metric = _get_fid_metric(device)
+    if metric is None:
+        return None
     model.eval()
 
     real_seen = 0

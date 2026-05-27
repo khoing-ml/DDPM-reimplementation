@@ -239,8 +239,13 @@ def train(cfg: TrainConfig):
                 image_size=cfg.image_size,
                 num_samples=cfg.fid_samples,
             )
-            print(f"epoch {epoch + 1}/{cfg.epochs} fid={fid:.4f}")
-            log_payload["eval/fid"] = fid
+            if fid is None:
+                print(
+                    f"epoch {epoch + 1}/{cfg.epochs} fid=skipped (install torch-fidelity or torchmetrics[image] to enable FID)"
+                )
+            else:
+                print(f"epoch {epoch + 1}/{cfg.epochs} fid={fid:.4f}")
+                log_payload["eval/fid"] = fid
 
         if wandb_run is not None:
             wandb_run.log(log_payload)
