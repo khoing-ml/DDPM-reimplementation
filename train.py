@@ -34,7 +34,6 @@ def main():
         save_every=args.save_every,
         sample_every=args.sample_every,
         num_sample_images=args.num_sample_images,
-        distributed=args.distributed,
         grad_accum_steps=args.grad_accum_steps,
         resume_from=args.resume_from,
     )
