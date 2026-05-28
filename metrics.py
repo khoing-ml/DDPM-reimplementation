@@ -32,6 +32,8 @@ def compute_fid(
     device: torch.device,
     image_size: int,
     num_samples: int = 1000,
+    guidance_scale: float = 1.0,
+    num_classes: int = 10,
 ):
     """Compute FID between samples from the model and a real loader.
 
@@ -41,29 +43,38 @@ def compute_fid(
     metric = _get_fid_metric(device)
     if metric is None:
         return None
+    was_training = model.training
     model.eval()
 
-    real_seen = 0
-    fake_seen = 0
+    try:
+        real_seen = 0
+        fake_seen = 0
 
-    for images, _ in loader:
-        images = images.to(device)
-        real = ((images + 1.0) / 2.0).clamp(0.0, 1.0)
-        batch = min(real.shape[0], num_samples - real_seen)
-        if batch <= 0:
-            break
-        metric.update(real[:batch], real=True)
-        real_seen += batch
-        if real_seen >= num_samples:
-            break
+        for images, labels in loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            real = ((images + 1.0) / 2.0).clamp(0.0, 1.0)
+            batch = min(real.shape[0], num_samples - real_seen, num_samples - fake_seen)
+            if batch <= 0:
+                break
+            metric.update(real[:batch], real=True)
+            real_seen += batch
 
-    while fake_seen < num_samples:
-        batch = min(loader.batch_size or 1, num_samples - fake_seen)
-        fake = diffusion.p_sample_loop(model.forward, shape=(batch, 3, image_size, image_size), device=device)
-        fake = ((fake + 1.0) / 2.0).clamp(0.0, 1.0)
-        metric.update(fake, real=False)
-        fake_seen += batch
+            fake_labels = labels[:batch] % num_classes
+            fake = diffusion.p_sample_loop(
+                model.forward,
+                shape=(batch, 3, image_size, image_size),
+                device=device,
+                labels=fake_labels,
+                guidance_scale=guidance_scale,
+            )
+            fake = ((fake + 1.0) / 2.0).clamp(0.0, 1.0)
+            metric.update(fake, real=False)
+            fake_seen += batch
 
-    score = metric.compute().item()
-    model.train()
-    return score
+            if real_seen >= num_samples and fake_seen >= num_samples:
+                break
+
+        return metric.compute().item()
+    finally:
+        model.train(was_training)

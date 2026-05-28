@@ -101,27 +101,64 @@ class GaussianDiffusion:
             self.sqrt_recipm1_alphas_cumprod.to(x_t.device).to(x_t.dtype), t, x_t.shape
         ) * eps
 
-    def p_mean_variance(self, denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], *, x: torch.Tensor, t: torch.Tensor):
-        model_output = denoise_fn(x, t)
+    def p_mean_variance(
+        self,
+        denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        *,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        guidance_scale: float = 1.0,
+    ):
+        if labels is not None and guidance_scale != 1.0:
+            uncond_output = denoise_fn(x, t, labels=None)
+            cond_output = denoise_fn(x, t, labels=labels)
+            model_output = uncond_output + guidance_scale * (cond_output - uncond_output)
+        else:
+            model_output = denoise_fn(x, t, labels=labels)
         pred_xstart = self.predict_xstart_from_eps(x_t=x, t=t, eps=model_output)
         pred_xstart = pred_xstart.clamp(-1.0, 1.0)
         model_mean, _, model_log_variance = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=x, t=t)
         return model_mean, model_log_variance, pred_xstart
 
     @torch.no_grad()
-    def p_sample(self, denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], *, x: torch.Tensor, t: torch.Tensor):
-        model_mean, model_log_variance, pred_xstart = self.p_mean_variance(denoise_fn, x=x, t=t)
+    def p_sample(
+        self,
+        denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        *,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        guidance_scale: float = 1.0,
+    ):
+        model_mean, model_log_variance, pred_xstart = self.p_mean_variance(
+            denoise_fn,
+            x=x,
+            t=t,
+            labels=labels,
+            guidance_scale=guidance_scale,
+        )
         noise = torch.randn_like(x)
         nonzero_mask = (t != 0).float().reshape(x.shape[0], *([1] * (x.dim() - 1)))
         sample = model_mean + nonzero_mask * torch.exp(0.5 * model_log_variance) * noise
         return sample, pred_xstart
 
     @torch.no_grad()
-    def p_sample_loop(self, denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], *, shape: Tuple[int, ...], device: torch.device):
+    def p_sample_loop(
+        self,
+        denoise_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        *,
+        shape: Tuple[int, ...],
+        device: torch.device,
+        labels: Optional[torch.Tensor] = None,
+        guidance_scale: float = 1.0,
+    ):
         img = torch.randn(shape, device=device)
+        if labels is not None:
+            labels = labels.to(device=device, dtype=torch.long)
         for i in reversed(range(self.num_timesteps)):
             t = torch.full((shape[0],), i, device=device, dtype=torch.long)
-            img, _ = self.p_sample(denoise_fn, x=img, t=t)
+            img, _ = self.p_sample(denoise_fn, x=img, t=t, labels=labels, guidance_scale=guidance_scale)
         return img
 
     def training_losses(
@@ -130,10 +167,12 @@ class GaussianDiffusion:
         x_start: torch.Tensor,
         t: torch.Tensor,
         noise: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        cond_drop_prob: float = 0.0,
     ):
         if noise is None:
             noise = torch.randn_like(x_start)
         x_t = self.q_sample(x_start=x_start, t=t, noise=noise)
         target = noise
-        model_output = denoise_fn(x_t, t)
+        model_output = denoise_fn(x_t, t, labels=labels, cond_drop_prob=cond_drop_prob)
         return F.mse_loss(model_output, target, reduction="none").mean(dim=(1, 2, 3))

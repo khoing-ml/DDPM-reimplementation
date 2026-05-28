@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm.auto import tqdm
 
 from diffusion import GaussianDiffusion, get_beta_schedule
 from data import build_cifar10_loaders
@@ -59,6 +60,10 @@ class TrainConfig:
     wandb_mode: str = "online"
     fid_every: int = 0
     fid_samples: int = 1000
+    num_classes: int = 10
+    class_dropout_prob: float = 0.1
+    guidance_scale: float = 3.0
+    samples_per_class: int = 8
     distributed: bool = False
     grad_accum_steps: int = 1
     resume_from: str = ""
@@ -74,6 +79,8 @@ def build_model(cfg: TrainConfig):
         attn_resolutions=cfg.attn_resolutions,
         dropout=cfg.dropout,
         resolution=cfg.image_size,
+        num_classes=cfg.num_classes,
+        class_dropout_prob=cfg.class_dropout_prob,
     )
     return model
 
@@ -89,6 +96,9 @@ def make_diffusion(cfg: TrainConfig):
 
 
 def train(cfg: TrainConfig):
+    if cfg.epochs < 1:
+        raise ValueError("epochs must be at least 1")
+
     set_seed(cfg.seed)
     distributed = setup_distributed() if cfg.distributed or is_distributed() else False
     rank = get_rank()
@@ -125,8 +135,9 @@ def train(cfg: TrainConfig):
         wandb_run.define_metric("eval/*", step_metric="train/global_step")
         wandb_run.define_metric("samples/*", step_metric="train/global_step")
         wandb_run.define_metric("panels/*", step_metric="train/global_step")
-    fixed_real_batch, _ = next(iter(test_loader))
+    fixed_real_batch, fixed_real_labels = next(iter(test_loader))
     fixed_real_batch = fixed_real_batch.to(device)
+    fixed_real_labels = fixed_real_labels.to(device)
     eval_model = unwrap_model(model)
 
     output_dir = Path(cfg.output_dir)
@@ -134,6 +145,7 @@ def train(cfg: TrainConfig):
         output_dir.mkdir(parents=True, exist_ok=True)
 
     accum_steps = max(1, cfg.grad_accum_steps)
+    sample_labels = torch.arange(cfg.num_classes, device=device).repeat_interleave(cfg.samples_per_class)
     for epoch in range(start_epoch, cfg.epochs):
         model.train()
         if distributed and hasattr(train_loader, "sampler") and train_loader.sampler is not None:
@@ -141,10 +153,24 @@ def train(cfg: TrainConfig):
         running_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         accum_index = 0
-        for images, _ in train_loader:
+        progress = tqdm(
+            train_loader,
+            desc=f"epoch {epoch + 1}/{cfg.epochs}",
+            leave=True,
+            dynamic_ncols=True,
+            disable=not is_main_process(),
+        )
+        for images, labels in progress:
             images = images.to(device)
+            labels = labels.to(device)
             t = torch.randint(0, diffusion.num_timesteps, (images.shape[0],), device=device, dtype=torch.long)
-            loss = diffusion.training_losses(model.forward, images, t).mean()
+            loss = diffusion.training_losses(
+                model.forward,
+                images,
+                t,
+                labels=labels,
+                cond_drop_prob=cfg.class_dropout_prob,
+            ).mean()
             loss_to_backward = loss / accum_steps
             accum_index += 1
             should_sync = accum_index == accum_steps
@@ -161,6 +187,9 @@ def train(cfg: TrainConfig):
                 optimizer.zero_grad(set_to_none=True)
                 accum_index = 0
 
+            if is_main_process():
+                progress.set_postfix(loss=f"{loss.item():.4f}", step=global_step)
+
             if wandb_run is not None:
                 wandb_run.log(
                     {
@@ -171,6 +200,8 @@ def train(cfg: TrainConfig):
                         "train/epoch": epoch + (accum_index / accum_steps),
                     },
                 )
+
+        progress.close()
 
         if accum_index != 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -195,40 +226,69 @@ def train(cfg: TrainConfig):
                     metadata={"epoch": epoch + 1, "global_step": global_step},
                 )
         if is_main_process() and (epoch + 1) % cfg.sample_every == 0:
-            samples_dir = output_dir / "samples"
-            grid = save_sample_grid(eval_model, diffusion, device, samples_dir, epoch + 1, cfg.image_size, cfg.num_sample_images)
-            if wandb_run is not None:
-                log_payload["samples/grid"] = wandb_image_from_grid(grid)
-                log_wandb_artifact(
-                    wandb_run,
-                    name=f"samples-epoch-{epoch + 1:06d}",
-                    artifact_type="sample_grid",
-                    file_path=samples_dir / f"sample_{epoch + 1:06d}.png",
-                    metadata={"epoch": epoch + 1, "global_step": global_step},
+            try:
+                samples_dir = output_dir / "samples"
+                grid = save_sample_grid(
+                    eval_model,
+                    diffusion,
+                    device,
+                    samples_dir,
+                    epoch + 1,
+                    cfg.image_size,
+                    num_images=sample_labels.shape[0],
+                    labels=sample_labels,
+                    guidance_scale=cfg.guidance_scale,
+                    nrow=cfg.samples_per_class,
                 )
+                if wandb_run is not None and grid is not None:
+                    log_payload["samples/grid"] = wandb_image_from_grid(grid)
+                    log_wandb_artifact(
+                        wandb_run,
+                        name=f"samples-epoch-{epoch + 1:06d}",
+                        artifact_type="sample_grid",
+                        file_path=samples_dir / f"sample_{epoch + 1:06d}.png",
+                        metadata={"epoch": epoch + 1, "global_step": global_step},
+                    )
 
-            fake_images = diffusion.p_sample_loop(
-                eval_model.forward,
-                shape=(min(cfg.num_sample_images, fixed_real_batch.shape[0]), 3, cfg.image_size, cfg.image_size),
-                device=device,
-            )
-            panels_dir = output_dir / "panels"
-            panel = save_real_fake_panel(
-                fixed_real_batch,
-                fake_images,
-                panels_dir,
-                epoch + 1,
-                num_images=min(cfg.num_sample_images, fixed_real_batch.shape[0], fake_images.shape[0]),
-            )
-            if wandb_run is not None:
-                log_payload["panels/real_vs_fake"] = wandb_image_from_grid(panel)
-                log_wandb_artifact(
-                    wandb_run,
-                    name=f"real-fake-panel-epoch-{epoch + 1:06d}",
-                    artifact_type="real_fake_panel",
-                    file_path=panels_dir / f"real_fake_{epoch + 1:06d}.png",
-                    metadata={"epoch": epoch + 1, "global_step": global_step},
+                fake_images = diffusion.p_sample_loop(
+                    eval_model.forward,
+                    shape=(min(cfg.num_sample_images, fixed_real_batch.shape[0]), 3, cfg.image_size, cfg.image_size),
+                    device=device,
+                    labels=fixed_real_labels[: min(cfg.num_sample_images, fixed_real_batch.shape[0])],
+                    guidance_scale=cfg.guidance_scale,
                 )
+                panels_dir = output_dir / "panels"
+                panel = save_real_fake_panel(
+                    fixed_real_batch,
+                    fake_images,
+                    panels_dir,
+                    epoch + 1,
+                    num_images=min(cfg.num_sample_images, fixed_real_batch.shape[0], fake_images.shape[0]),
+                )
+                if wandb_run is not None and panel is not None:
+                    log_payload["panels/real_vs_fake"] = wandb_image_from_grid(panel)
+                    log_wandb_artifact(
+                        wandb_run,
+                        name=f"real-fake-panel-epoch-{epoch + 1:06d}",
+                        artifact_type="real_fake_panel",
+                        file_path=panels_dir / f"real_fake_{epoch + 1:06d}.png",
+                        metadata={"epoch": epoch + 1, "global_step": global_step},
+                    )
+            except KeyboardInterrupt:
+                print(f"epoch {epoch + 1}/{cfg.epochs} interrupted during sampling (KeyboardInterrupt)")
+                raise
+            except Exception as e:
+                print(f"epoch {epoch + 1}/{cfg.epochs} sample generation failed: {e}")
+                try:
+                    import traceback
+
+                    traceback.print_exc()
+                except Exception:
+                    pass
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         if is_main_process() and cfg.fid_every > 0 and (epoch + 1) % cfg.fid_every == 0:
             fid = compute_fid(
@@ -238,6 +298,8 @@ def train(cfg: TrainConfig):
                 device=device,
                 image_size=cfg.image_size,
                 num_samples=cfg.fid_samples,
+                guidance_scale=cfg.guidance_scale,
+                num_classes=cfg.num_classes,
             )
             if fid is None:
                 print(
@@ -284,6 +346,10 @@ def parse_args():
     parser.add_argument("--wandb-mode", default="online")
     parser.add_argument("--fid-every", type=int, default=0)
     parser.add_argument("--fid-samples", type=int, default=1000)
+    parser.add_argument("--num-classes", type=int, default=10)
+    parser.add_argument("--class-dropout-prob", type=float, default=0.1)
+    parser.add_argument("--guidance-scale", type=float, default=3.0)
+    parser.add_argument("--samples-per-class", type=int, default=8)
     parser.add_argument("--distributed", action="store_true")
     parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--resume-from", default="")
@@ -318,6 +384,10 @@ if __name__ == "__main__":
         wandb_mode=args.wandb_mode,
         fid_every=args.fid_every,
         fid_samples=args.fid_samples,
+        num_classes=args.num_classes,
+        class_dropout_prob=args.class_dropout_prob,
+        guidance_scale=args.guidance_scale,
+        samples_per_class=args.samples_per_class,
         distributed=args.distributed,
         grad_accum_steps=args.grad_accum_steps,
         resume_from=args.resume_from,

@@ -3,3 +3,4 @@ models/__pycache__/*
 .vscode
 __pycache__/*
 runs/
+wandb/*

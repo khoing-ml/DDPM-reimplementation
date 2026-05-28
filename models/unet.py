@@ -110,10 +110,15 @@ class UNet(nn.Module):
         dropout=0.,
         resolution=32,
         resamp_with_conv=True,
+        num_classes: int = 10,
+        class_dropout_prob: float = 0.1,
     ):
         super().__init__()
         self.ch = ch
         self.temb_dim = ch * 4
+        self.num_classes = num_classes
+        self.null_class_id = num_classes
+        self.class_dropout_prob = class_dropout_prob
         self.num_resolutions = len(ch_mult)
         self.resolution = resolution
         self.attn_resolutions = set(attn_resolutions)
@@ -123,6 +128,7 @@ class UNet(nn.Module):
             nn.SiLU(),
             nn.Linear(self.temb_dim, self.temb_dim),
         )
+        self.class_embed = nn.Embedding(num_classes + 1, self.temb_dim)
 
         # input conv
         self.conv_in = nn.Conv2d(in_ch, ch, kernel_size=3, padding=1)
@@ -181,10 +187,26 @@ class UNet(nn.Module):
         self.norm_out = nn.GroupNorm(32, in_channels)
         self.conv_out = nn.Conv2d(in_channels, out_ch, kernel_size=3, padding=1)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        cond_drop_prob: float = 0.0,
+    ):
         B = x.shape[0]
         temb = mnn.get_timestep_embedding(t, self.ch)
         temb = self.time_embed(temb)
+        if labels is None:
+            labels = torch.full((B,), self.null_class_id, device=x.device, dtype=torch.long)
+        else:
+            labels = labels.to(device=x.device, dtype=torch.long)
+            if self.training and cond_drop_prob > 0.0:
+                drop_mask = torch.rand(B, device=x.device) < cond_drop_prob
+                labels = labels.clone()
+                labels[drop_mask] = self.null_class_id
+
+        temb = temb + self.class_embed(labels)
 
         h = self.conv_in(x)
         hs = [h]

@@ -15,11 +15,22 @@ def save_sample_grid(
     step: int,
     image_size: int,
     num_images: int = 64,
+    labels: torch.Tensor | None = None,
+    guidance_scale: float = 1.0,
+    nrow: int | None = None,
 ):
     model.eval()
-    samples = diffusion.p_sample_loop(model.forward, shape=(num_images, 3, image_size, image_size), device=device)
+    if labels is not None:
+        num_images = labels.shape[0]
+    samples = diffusion.p_sample_loop(
+        model.forward,
+        shape=(num_images, 3, image_size, image_size),
+        device=device,
+        labels=labels,
+        guidance_scale=guidance_scale,
+    )
     samples = (samples.clamp(-1, 1) + 1.0) / 2.0
-    grid = tv_utils.make_grid(samples, nrow=int(num_images**0.5)).cpu()
+    grid = tv_utils.make_grid(samples, nrow=nrow or int(num_images**0.5)).cpu()
     output_dir.mkdir(parents=True, exist_ok=True)
     tv_utils.save_image(grid, output_dir / f"sample_{step:06d}.png")
     model.train()

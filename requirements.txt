@@ -1,4 +1,6 @@
 torch
 torchvision
 wandb
-torchmetrics
+torchmetrics[images]
+torchfidelity
+tqdm
