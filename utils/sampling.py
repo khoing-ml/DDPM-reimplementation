@@ -22,6 +22,10 @@ def save_sample_grid(
     model.eval()
     if labels is not None:
         num_images = labels.shape[0]
+    print(
+        f"saving sample grid: step={step} num_images={num_images} guidance_scale={guidance_scale}",
+        flush=True,
+    )
     samples = diffusion.p_sample_loop(
         model.forward,
         shape=(num_images, 3, image_size, image_size),
@@ -33,6 +37,7 @@ def save_sample_grid(
     grid = tv_utils.make_grid(samples, nrow=nrow or int(num_images**0.5)).cpu()
     output_dir.mkdir(parents=True, exist_ok=True)
     tv_utils.save_image(grid, output_dir / f"sample_{step:06d}.png")
+    print(f"saved sample grid: step={step} path={output_dir / f'sample_{step:06d}.png'}", flush=True)
     model.train()
     return grid
 
@@ -46,9 +51,11 @@ def save_real_fake_panel(
     num_images: int = 8,
 ):
     """Save a 2-row panel: real images on top, generated images on bottom."""
+    print(f"saving real/fake panel: step={step} num_images={num_images}", flush=True)
     real = ((real_images[:num_images].clamp(-1, 1) + 1.0) / 2.0).cpu()
     fake = ((fake_images[:num_images].clamp(-1, 1) + 1.0) / 2.0).cpu()
     panel = tv_utils.make_grid(torch.cat([real, fake], dim=0), nrow=num_images)
     output_dir.mkdir(parents=True, exist_ok=True)
     tv_utils.save_image(panel, output_dir / f"real_fake_{step:06d}.png")
+    print(f"saved real/fake panel: step={step} path={output_dir / f'real_fake_{step:06d}.png'}", flush=True)
     return panel

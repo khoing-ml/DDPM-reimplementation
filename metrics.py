@@ -45,6 +45,7 @@ def compute_fid(
         return None
     was_training = model.training
     model.eval()
+    print(f"starting FID computation: num_samples={num_samples} guidance_scale={guidance_scale}", flush=True)
 
     try:
         real_seen = 0
@@ -75,6 +76,8 @@ def compute_fid(
             if real_seen >= num_samples and fake_seen >= num_samples:
                 break
 
-        return metric.compute().item()
+        fid = metric.compute().item()
+        print(f"finished FID computation: fid={fid:.4f}", flush=True)
+        return fid
     finally:
         model.train(was_training)
