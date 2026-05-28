@@ -312,6 +312,9 @@ def train(cfg: TrainConfig):
         if wandb_run is not None:
             wandb_run.log(log_payload)
 
+        if distributed and dist.is_initialized():
+            dist.barrier()
+
     if distributed and dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()
