@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import os
 
 import torch
@@ -30,7 +31,12 @@ def setup_distributed():
     if not is_distributed():
         return False
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", init_method="env://")
+        timeout_minutes = int(os.environ.get("DDP_TIMEOUT_MINUTES", "120"))
+        dist.init_process_group(
+            backend="nccl",
+            init_method="env://",
+            timeout=timedelta(minutes=timeout_minutes),
+        )
     if torch.cuda.is_available():
         local_rank = get_local_rank()
         device_count = torch.cuda.device_count()
