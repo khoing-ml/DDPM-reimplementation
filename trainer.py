@@ -146,6 +146,46 @@ def train(cfg: TrainConfig):
 
     accum_steps = max(1, cfg.grad_accum_steps)
     sample_labels = torch.arange(cfg.num_classes, device=device).repeat_interleave(cfg.samples_per_class)
+
+    if is_main_process():
+        preview_sample_count = min(cfg.num_classes, fixed_real_batch.shape[0])
+        preview_labels = torch.arange(preview_sample_count, device=device)
+        try:
+            preview_grid = save_sample_grid(
+                eval_model,
+                diffusion,
+                device,
+                output_dir / "samples",
+                start_epoch or 0,
+                cfg.image_size,
+                num_images=preview_sample_count,
+                labels=preview_labels,
+                guidance_scale=cfg.guidance_scale,
+                nrow=preview_sample_count,
+            )
+            if wandb_run is not None and preview_grid is not None:
+                wandb_run.log({"samples/preview_grid": wandb_image_from_grid(preview_grid), "train/global_step": global_step})
+
+            preview_panel_count = min(cfg.num_sample_images, fixed_real_batch.shape[0], 8)
+            preview_fake_images = diffusion.p_sample_loop(
+                eval_model.forward,
+                shape=(preview_panel_count, 3, cfg.image_size, cfg.image_size),
+                device=device,
+                labels=fixed_real_labels[:preview_panel_count],
+                guidance_scale=cfg.guidance_scale,
+            )
+            preview_panel = save_real_fake_panel(
+                fixed_real_batch,
+                preview_fake_images,
+                output_dir / "panels",
+                start_epoch or 0,
+                num_images=preview_panel_count,
+            )
+            if wandb_run is not None and preview_panel is not None:
+                wandb_run.log({"panels/preview_real_vs_fake": wandb_image_from_grid(preview_panel), "train/global_step": global_step})
+        except Exception as exc:
+            print(f"preview sampling failed before training: {exc}")
+
     for epoch in range(start_epoch, cfg.epochs):
         model.train()
         if distributed and hasattr(train_loader, "sampler") and train_loader.sampler is not None:

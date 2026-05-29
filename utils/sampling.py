@@ -19,6 +19,7 @@ def save_sample_grid(
     guidance_scale: float = 1.0,
     nrow: int | None = None,
 ):
+    was_training = model.training
     model.eval()
     if labels is not None:
         num_images = labels.shape[0]
@@ -26,20 +27,22 @@ def save_sample_grid(
         f"saving sample grid: step={step} num_images={num_images} guidance_scale={guidance_scale}",
         flush=True,
     )
-    samples = diffusion.p_sample_loop(
-        model.forward,
-        shape=(num_images, 3, image_size, image_size),
-        device=device,
-        labels=labels,
-        guidance_scale=guidance_scale,
-    )
-    samples = (samples.clamp(-1, 1) + 1.0) / 2.0
-    grid = tv_utils.make_grid(samples, nrow=nrow or int(num_images**0.5)).cpu()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tv_utils.save_image(grid, output_dir / f"sample_{step:06d}.png")
-    print(f"saved sample grid: step={step} path={output_dir / f'sample_{step:06d}.png'}", flush=True)
-    model.train()
-    return grid
+    try:
+        samples = diffusion.p_sample_loop(
+            model.forward,
+            shape=(num_images, 3, image_size, image_size),
+            device=device,
+            labels=labels,
+            guidance_scale=guidance_scale,
+        )
+        samples = (samples.clamp(-1, 1) + 1.0) / 2.0
+        grid = tv_utils.make_grid(samples, nrow=nrow or int(num_images**0.5)).cpu()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        tv_utils.save_image(grid, output_dir / f"sample_{step:06d}.png")
+        print(f"saved sample grid: step={step} path={output_dir / f'sample_{step:06d}.png'}", flush=True)
+        return grid
+    finally:
+        model.train(was_training)
 
 
 @torch.no_grad()
